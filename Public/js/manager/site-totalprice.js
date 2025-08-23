@@ -3,6 +3,7 @@
 let currentUser = null;
 let availableSites = [];
 let availableCompanies = [];
+let siteToCompanies = {};
 let totalPriceData = [];
 let tableSort = { key: 'materialName', dir: 'asc' };
 let pagination = { page: 1, pageSize: 25 };
@@ -390,6 +391,10 @@ async function loadAvailableSites() {
                 data.users.forEach((user) => {
                     if (user.site) sites.add(user.site);
                     if (user.company) companies.add(user.company);
+                    if (user.site && user.company) {
+                        if (!siteToCompanies[user.site]) siteToCompanies[user.site] = new Set();
+                        siteToCompanies[user.site].add(user.company);
+                    }
                 });
             } else if (data.site) {
                 sites.add(data.site);
@@ -404,6 +409,10 @@ async function loadAvailableSites() {
             const savedCompany = localStorage.getItem('managerCompany');
             availableSites = payload?.site ? [payload.site] : (savedSite ? [savedSite] : []);
             availableCompanies = payload?.company ? [payload.company] : (savedCompany ? [savedCompany] : []);
+            if (payload?.site && payload?.company) {
+                if (!siteToCompanies[payload.site]) siteToCompanies[payload.site] = new Set();
+                siteToCompanies[payload.site].add(payload.company);
+            }
             
             if (availableSites.length === 0 || availableCompanies.length === 0) {
                 // Fallback: ask backend for users created by this manager and derive site/company from them
@@ -421,6 +430,10 @@ async function loadAvailableSites() {
                         (data.users || []).forEach(u => {
                             if (u.site) sites.add(u.site);
                             if (u.company) companies.add(u.company);
+                            if (u.site && u.company) {
+                                if (!siteToCompanies[u.site]) siteToCompanies[u.site] = new Set();
+                                siteToCompanies[u.site].add(u.company);
+                            }
                         });
                         availableSites = availableSites.length ? availableSites : Array.from(sites);
                         availableCompanies = availableCompanies.length ? availableCompanies : Array.from(companies);
@@ -488,10 +501,14 @@ function populateCompanySelect() {
     
     // Store current selection if it exists
     const currentCompany = companySelect.value;
+    const selectedSite = document.getElementById('siteSelect')?.value || '';
+    const allowedCompanies = selectedSite && siteToCompanies[selectedSite]
+        ? Array.from(siteToCompanies[selectedSite])
+        : availableCompanies.slice();
     
     companySelect.innerHTML = '<option value="">Select a company...</option>';
     
-    availableCompanies.forEach(company => {
+    allowedCompanies.forEach(company => {
         const option = document.createElement('option');
         option.value = company;
         option.textContent = company;
@@ -499,13 +516,19 @@ function populateCompanySelect() {
     });
     
     // Restore selection if it's still valid
-    if (currentCompany && availableCompanies.includes(currentCompany)) {
+    if (currentCompany && allowedCompanies.includes(currentCompany)) {
         companySelect.value = currentCompany;
+    } else if (allowedCompanies.length === 1) {
+        companySelect.value = allowedCompanies[0];
+        try { localStorage.setItem('managerCompany', allowedCompanies[0]); } catch (_) { /* ignore */ }
+    } else {
+        companySelect.value = '';
+        try { localStorage.removeItem('managerCompany'); } catch (_) { /* ignore */ }
     }
 }
 
 // Update company options based on selected site
-function updateCompanyOptions(_selectedSite) {
+function updateCompanyOptions(selectedSite) {
     const companySelect = document.getElementById('companySelect');
     if (!companySelect) {
         return;
@@ -515,7 +538,9 @@ function updateCompanyOptions(_selectedSite) {
     const currentCompany = companySelect.value;
     
     // Filter companies based on selected site
-    const filteredCompanies = availableCompanies.slice();
+    const filteredCompanies = selectedSite && siteToCompanies[selectedSite]
+        ? Array.from(siteToCompanies[selectedSite])
+        : availableCompanies.slice();
     
     companySelect.innerHTML = '<option value="">Select a company...</option>';
     
@@ -529,6 +554,12 @@ function updateCompanyOptions(_selectedSite) {
     // Restore company selection if it's still valid
     if (currentCompany && filteredCompanies.includes(currentCompany)) {
         companySelect.value = currentCompany;
+    } else if (filteredCompanies.length === 1) {
+        companySelect.value = filteredCompanies[0];
+        try { localStorage.setItem('managerCompany', filteredCompanies[0]); } catch (_) { /* ignore */ }
+    } else {
+        companySelect.value = '';
+        try { localStorage.removeItem('managerCompany'); } catch (_) { /* ignore */ }
     }
 }
 
@@ -576,6 +607,15 @@ async function fetchTotalPrices() {
     
     if (!companySelect.value) {
         showMessage('Please select a company.', 'error');
+        return;
+    }
+    // Ensure selected company belongs to selected site
+    const allowedForSite = siteSelect.value && siteToCompanies[siteSelect.value]
+        ? Array.from(siteToCompanies[siteSelect.value])
+        : availableCompanies.slice();
+    if (companySelect.value && !allowedForSite.includes(companySelect.value)) {
+        showMessage('Selected company is not available for the chosen site.', 'error');
+        updateCompanyOptions(siteSelect.value);
         return;
     }
     
